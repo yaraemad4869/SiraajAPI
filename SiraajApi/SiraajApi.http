@@ -1,0 +1,6 @@
+@SiraajApi_HostAddress = http://localhost:5124
+
+GET {{SiraajApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

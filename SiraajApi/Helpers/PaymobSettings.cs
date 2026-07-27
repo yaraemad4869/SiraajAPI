@@ -1,0 +1,10 @@
+﻿namespace SiraajApi.Helpers
+{
+    public class PaymobSettings
+    {
+        public string ApiKey { get; set; } = string.Empty;
+        public string IntegrationId { get; set; } = string.Empty;
+        public string HMACSecret { get; set; } = string.Empty;
+        public string BaseUrl { get; set; } = "https://accept.paymob.com/api";
+    }
+}
