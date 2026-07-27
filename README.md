@@ -811,7 +811,7 @@ GitHub: @yaraemad4869
 
 Email: info@sirajacademy.com
 
-Phone: +966 50 000 0000
+Phone: +201127769084
 
 <div align="center"> <h3>🌟 "And We have certainly made the Quran easy to remember" - Surah Al-Qamar 54:17</h3> <p style="color: #666;">Made with ❤️ for Siraaj Online Quran Academy</p>
 ⬆ Back to Top
