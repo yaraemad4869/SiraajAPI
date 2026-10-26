@@ -24,31 +24,21 @@ namespace SiraajApi.Controllers
             _paymentService = paymentService;
         }
 
-        // POST: api/payments/initiate
         [HttpPost("initiate")]
         [Authorize]
         public async Task<IActionResult> InitiatePayment([FromBody] InitiatePaymentRequest request)
         {
             try
             {
-                // Validate student exists
                 var student = await _context.Students
                     .Include(s => s.User)
                     .FirstOrDefaultAsync(s => s.UserId == request.StudentId);
 
                 if (student == null)
                 {
-                    return NotFound(new
-                    {
-                        success = false,
-                        statusCode = 404,
-                        message = "الطالب غير موجود",
-                        timestamp = DateTime.UtcNow,
-                        path = "/api/payments/initiate"
-                    });
+                    return NotFound(new { success = false, message = "Student not found" });
                 }
 
-                // Validate student program
                 var studentProgram = await _context.StudentPrograms
                     .Include(sp => sp.Package)
                     .Include(sp => sp.Program)
@@ -56,31 +46,36 @@ namespace SiraajApi.Controllers
 
                 if (studentProgram == null)
                 {
-                    return NotFound(new
-                    {
-                        success = false,
-                        statusCode = 404,
-                        message = "برنامج الطالب غير موجود",
-                        timestamp = DateTime.UtcNow,
-                        path = "/api/payments/initiate"
-                    });
+                    return NotFound(new { success = false, message = "Student program not found" });
                 }
 
-                // Process payment
+                decimal finalAmount = 0;
+                string currency = request.Currency?.ToUpper() ?? "SAR";
+
+                if (currency == "USD" && studentProgram.Package.PriceUsd.HasValue)
+                {
+                    finalAmount = studentProgram.Package.PriceUsd.Value;
+                }
+                else
+                {
+                    finalAmount = studentProgram.Package.Price;
+                    currency = "SAR";
+                }
+
+                request.Amount = finalAmount;
+
                 var result = await _paymentService.ProcessPayment(request);
 
-                // Save payment record
                 var payment = new Payment
                 {
                     Id = result.PaymentId,
                     StudentId = request.StudentId,
                     StudentProgramId = request.StudentProgramId,
-                    Amount = studentProgram.Package.Price,
-                    DiscountApplied = 0, // Calculate based on family/referral discounts
-                    FinalAmount = studentProgram.Package.Price,
+                    Amount = finalAmount,
+                    DiscountApplied = 0,
+                    FinalAmount = finalAmount,
                     PaymentMethod = request.PaymentMethod,
-                    PaymentGateway = request.PaymentMethod == "stripe" ? "stripe" : 
-                                    request.PaymentMethod == "paymob" ? "paymob" : "manual",
+                    PaymentGateway = request.PaymentMethod == "stripe" ? "stripe" : "paymob",
                     TransactionId = result.TransactionId,
                     Status = result.Status,
                     PaymentDate = DateTime.UtcNow,
@@ -90,7 +85,6 @@ namespace SiraajApi.Controllers
 
                 _context.Payments.Add(payment);
 
-                // If payment successful, create subscription
                 if (result.Status == "completed")
                 {
                     var subscription = new Subscription
@@ -107,10 +101,8 @@ namespace SiraajApi.Controllers
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     };
-
                     _context.Subscriptions.Add(subscription);
 
-                    // Generate invoice
                     var invoice = new Invoice
                     {
                         Id = Guid.NewGuid(),
@@ -119,18 +111,17 @@ namespace SiraajApi.Controllers
                         StudentId = request.StudentId,
                         StudentName = student.User?.NameAr ?? "Student",
                         PackageName = studentProgram.Package.NameAr,
-                        Amount = payment.FinalAmount,
-                        Tax = 0, // No tax for now
-                        TotalAmount = payment.FinalAmount,
-                        Currency = "SAR",
+                        Amount = finalAmount,
+                        Tax = 0,
+                        TotalAmount = finalAmount,
+                        Currency = currency,
                         IssueDate = DateTime.UtcNow,
                         DueDate = DateTime.UtcNow.AddDays(7),
                         IsPaid = true,
-                        PdfUrl = $"https://siraaj.com/invoices/{Guid.NewGuid()}.pdf",
+                        PdfUrl = "",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     };
-
                     _context.Invoices.Add(invoice);
                 }
 
@@ -140,7 +131,7 @@ namespace SiraajApi.Controllers
                 {
                     success = true,
                     data = result,
-                    message = result.Status == "completed" ? "تم الدفع بنجاح" : "جاري معالجة الدفع"
+                    message = result.Status == "completed" ? "Payment successful" : "Processing payment"
                 });
             }
             catch (Exception ex)
@@ -148,15 +139,12 @@ namespace SiraajApi.Controllers
                 return StatusCode(500, new
                 {
                     success = false,
-                    statusCode = 500,
-                    message = "حدث خطأ أثناء معالجة الدفع",
-                    timestamp = DateTime.UtcNow,
-                    path = "/api/payments/initiate"
+                    message = "An error occurred during payment processing",
+                    error = ex.Message
                 });
             }
         }
 
-        // POST: api/payments/callback
         [HttpPost("callback")]
         public async Task<IActionResult> PaymentCallback([FromBody] PaymentCallbackRequest request)
         {
@@ -164,7 +152,6 @@ namespace SiraajApi.Controllers
             {
                 var result = await _paymentService.HandleCallback(request);
 
-                // Update payment status
                 var payment = await _context.Payments
                     .FirstOrDefaultAsync(p => p.TransactionId == request.TransactionId);
 
@@ -175,26 +162,14 @@ namespace SiraajApi.Controllers
                     await _context.SaveChangesAsync();
                 }
 
-                return Ok(new
-                {
-                    success = true,
-                    data = result
-                });
+                return Ok(new { success = true, data = result });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    success = false,
-                    statusCode = 500,
-                    message = "حدث خطأ أثناء معالجة رد الدفع",
-                    timestamp = DateTime.UtcNow,
-                    path = "/api/payments/callback"
-                });
+                return StatusCode(500, new { success = false, message = "Error", error = ex.Message });
             }
         }
 
-        // GET: api/payments/history/{studentId}
         [HttpGet("history/{studentId}")]
         [Authorize]
         public async Task<IActionResult> GetPaymentHistory(Guid studentId)
@@ -218,26 +193,14 @@ namespace SiraajApi.Controllers
                     })
                     .ToListAsync();
 
-                return Ok(new
-                {
-                    success = true,
-                    data = payments
-                });
+                return Ok(new { success = true, data = payments });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    success = false,
-                    statusCode = 500,
-                    message = "حدث خطأ أثناء جلب سجل الدفعات",
-                    timestamp = DateTime.UtcNow,
-                    path = $"/api/payments/history/{studentId}"
-                });
+                return StatusCode(500, new { success = false, message = "Error", error = ex.Message });
             }
         }
 
-        // GET: api/payments/invoices/{studentId}
         [HttpGet("invoices/{studentId}")]
         [Authorize]
         public async Task<IActionResult> GetInvoices(Guid studentId)
@@ -261,26 +224,14 @@ namespace SiraajApi.Controllers
                     })
                     .ToListAsync();
 
-                return Ok(new
-                {
-                    success = true,
-                    data = invoices
-                });
+                return Ok(new { success = true, data = invoices });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    success = false,
-                    statusCode = 500,
-                    message = "حدث خطأ أثناء جلب الفواتير",
-                    timestamp = DateTime.UtcNow,
-                    path = $"/api/payments/invoices/{studentId}"
-                });
+                return StatusCode(500, new { success = false, message = "Error", error = ex.Message });
             }
         }
 
-        // GET: api/payments/subscriptions/{studentId}
         [HttpGet("subscriptions/{studentId}")]
         [Authorize]
         public async Task<IActionResult> GetSubscriptions(Guid studentId)
@@ -304,22 +255,11 @@ namespace SiraajApi.Controllers
                     })
                     .ToListAsync();
 
-                return Ok(new
-                {
-                    success = true,
-                    data = subscriptions
-                });
+                return Ok(new { success = true, data = subscriptions });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    success = false,
-                    statusCode = 500,
-                    message = "حدث خطأ أثناء جلب الاشتراكات",
-                    timestamp = DateTime.UtcNow,
-                    path = $"/api/payments/subscriptions/{studentId}"
-                });
+                return StatusCode(500, new { success = false, message = "Error", error = ex.Message });
             }
         }
     }

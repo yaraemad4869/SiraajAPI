@@ -13,7 +13,7 @@ namespace SiraajApi.Models
         public decimal Amount { get; set; }
         public decimal Tax { get; set; }
         public decimal TotalAmount { get; set; }
-        public string Currency { get; set; } = "SAR";
+        public string Currency { get; set; } = "SAR"; // <-- Ensure this exists
         public DateTime IssueDate { get; set; }
         public DateTime DueDate { get; set; }
         public bool IsPaid { get; set; }

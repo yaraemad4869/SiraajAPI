@@ -1,0 +1,139 @@
+﻿// ============================================
+// ADD THESE METHODS TO ReportsController.cs
+// ============================================
+
+// GET: api/reports/student/{id}/download
+[HttpGet("student/{id}/download")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> DownloadStudentReport(Guid id, [FromQuery] string format = "csv")
+{
+    try
+    {
+        var summary = await _feedbackService.GetStudentReportSummary(id);
+        if (summary == null)
+        {
+            return NotFound(new
+            {
+                success = false,
+                statusCode = 404,
+                message = "Student report not found",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/reports/student/{id}/download"
+            });
+        }
+
+        if (format.ToLower() == "csv")
+        {
+            var csv = GenerateStudentReportCsv(summary);
+            return File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", $"Student-Report-{id}.csv");
+        }
+
+        // Default: PDF
+        var pdf = await _feedbackService.GenerateStudentReportPdf(id);
+        if (pdf == null || pdf.Length == 0)
+        {
+            return NotFound(new
+            {
+                success = false,
+                statusCode = 404,
+                message = "PDF report generation failed",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/reports/student/{id}/download"
+            });
+        }
+
+        return File(pdf, "application/pdf", $"Student-Report-{id}.pdf");
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while downloading report",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/reports/student/{id}/download"
+        });
+    }
+}
+
+// GET: api/reports/class/{classId}
+[HttpGet("class/{classId}")]
+[Authorize(Roles = "admin,supervisor")]
+public async Task<IActionResult> GetClassReport(Guid classId, [FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+{
+    try
+    {
+        // Get all students in this class
+        var students = await _context.Students
+            .Include(s => s.User)
+            .Where(s => s.UserId == classId) // This would need proper class grouping
+            .ToListAsync();
+
+        var reports = new List<object>();
+
+        foreach (var student in students)
+        {
+            var summary = await _feedbackService.GetStudentReportSummary(student.UserId);
+            if (summary != null)
+            {
+                reports.Add(summary);
+            }
+        }
+
+        return Ok(new
+        {
+            success = true,
+            data = new
+            {
+                ClassId = classId,
+                TotalStudents = students.Count,
+                Reports = reports,
+                AverageScore = reports.Count > 0 ? reports.Average(r => ((dynamic)r).AverageRating) : 0,
+                TotalSurahsCompleted = reports.Sum(r => ((dynamic)r).TotalSurahsCompleted)
+            }
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while fetching class report",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/reports/class/{classId}"
+        });
+    }
+}
+
+// Helper method to generate CSV
+private string GenerateStudentReportCsv(StudentReportSummary summary)
+{
+    var csv = new System.Text.StringBuilder();
+    
+    // Header
+    csv.AppendLine("Student Report");
+    csv.AppendLine($"Student Name,{summary.StudentName}");
+    csv.AppendLine($"Current Level,{summary.CurrentLevel}");
+    csv.AppendLine($"Tajweed Level,{summary.TajweedLevel}");
+    csv.AppendLine($"Total Sessions,{summary.TotalSessions}");
+    csv.AppendLine($"Total Surahs Completed,{summary.TotalSurahsCompleted}");
+    csv.AppendLine($"Total Verses Memorized,{summary.TotalVersesMemorized}");
+    csv.AppendLine($"Average Rating,{summary.AverageRating}");
+    csv.AppendLine($"Memorization Accuracy,{summary.MemorizationAccuracy}");
+    csv.AppendLine($"Tajweed Accuracy,{summary.TajweedAccuracy}");
+    csv.AppendLine($"Fluency,{summary.Fluency}");
+    csv.AppendLine();
+    
+    // Surahs Completed
+    csv.AppendLine("Surahs Completed:");
+    csv.AppendLine("Surah Name,Surah Number,Completion Type,Verses,Memorization Accuracy,Tajweed Accuracy,Fluency,Completed Date");
+    
+    foreach (var surah in summary.SurahsCompleted)
+    {
+        csv.AppendLine($"{surah.SurahName},{surah.SurahNumber},{surah.CompletionType},{surah.VersesCount},{surah.MemorizationAccuracy},{surah.TajweedAccuracy},{surah.Fluency},{surah.CompletedAt:yyyy-MM-dd}");
+    }
+    
+    return csv.ToString();
+}

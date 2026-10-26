@@ -14,9 +14,16 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Siraaj API", Version = "v1" });
+    c.SwaggerDoc("v1", new OpenApiInfo 
+    { 
+        Title = "Siraaj API", 
+        Version = "v1",
+        Description = "Siraaj Online Quran Academy API"
+    });
+    
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -26,6 +33,7 @@ builder.Services.AddSwaggerGen(c =>
         In = ParameterLocation.Header,
         Description = "Enter 'Bearer' [space] and then your token"
     });
+    
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
@@ -38,68 +46,74 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ===== SIMPLIFIED JWT AUTHENTICATION =====
-var key = Encoding.UTF8.GetBytes("SiraajAcademySecretKey2024ForJWTTokenGeneration");
+var key = Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"] ?? "SiraajAcademySecretKey2024ForJWTTokenGeneration");
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false; 
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.RequireHttpsMetadata = false;
-        options.SaveToken = true;
-        options.TokenValidationParameters = new TokenValidationParameters
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero,
+        RoleClaimType = ClaimTypes.Role
+    };
+    
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
         {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(key),
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero,
-            RoleClaimType = ClaimTypes.Role
-        };
-        options.Events = new JwtBearerEvents
+            Console.WriteLine("Auth Failed: " + context.Exception.Message);
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
         {
-            OnAuthenticationFailed = context =>
-            {
-                Console.WriteLine($"Auth Failed: {context.Exception.Message}");
-                return Task.CompletedTask;
-            },
-            OnTokenValidated = context =>
-            {
-                Console.WriteLine($"Token Validated!");
-                return Task.CompletedTask;
-            },
-            OnChallenge = context =>
-            {
-                Console.WriteLine($"Challenge: {context.Error}");
-                return Task.CompletedTask;
-            }
-        };
-    });
+            Console.WriteLine("Token Validated for user: " + context.Principal?.FindFirst("phone")?.Value);
+            return Task.CompletedTask;
+        }
+    };
+});
 
 builder.Services.AddAuthorization();
 
-// CORS
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll",
-        policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://localhost:5000"
+        )
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials();
+    });
 });
 
-// Services
+builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("StripeSettings"));
+builder.Services.Configure<PaymobSettings>(builder.Configuration.GetSection("PaymobSettings"));
+
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IPaymentService, RealStripePaymentService>();
 
-// Payment settings
-builder.Services.Configure<StripeSettings>(
-    builder.Configuration.GetSection("StripeSettings"));
-builder.Services.Configure<PaymobSettings>(
-    builder.Configuration.GetSection("PaymobSettings"));
-
-builder.Services.AddHttpClient<RealPaymobPaymentService>();
+builder.Services.AddHttpClient<RealPaymobPaymentService>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["PaymobSettings:BaseUrl"] ?? "https://accept.paymob.com/api");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
 
 var app = builder.Build();
 
@@ -108,14 +122,18 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+else
+{
+    app.UseHsts();
+}
 
 app.UseHttpsRedirection();
-app.UseCors("AllowAll");
+app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
+
 app.MapControllers();
 
-// Debug endpoint
 app.MapGet("/api/debug/claims", (HttpContext context) =>
 {
     var user = context.User;
@@ -123,14 +141,13 @@ app.MapGet("/api/debug/claims", (HttpContext context) =>
     {
         IsAuthenticated = user.Identity?.IsAuthenticated ?? false,
         Claims = user.Claims.Select(c => new { c.Type, c.Value }),
-        Roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value)
+        Roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value),
+        Name = user.Identity?.Name
     });
 });
 
-// Health check
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
-// Seed database
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -138,6 +155,7 @@ using (var scope = app.Services.CreateScope())
 
     if (!await context.Users.AnyAsync())
     {
+        Console.WriteLine("Seeding database...");
         var now = DateTime.UtcNow;
         var adminId = Guid.NewGuid();
 
@@ -206,24 +224,19 @@ using (var scope = app.Services.CreateScope())
 
         await context.SaveChangesAsync();
 
-        // Student record
-        var studentRecord = new Student
+        context.Students.Add(new Student
         {
             UserId = studentId,
             PackageId = "premium",
             Schedule = "[\"sat-09:00\",\"mon-09:00\",\"wed-09:00\"]",
             Status = "active",
             TeacherId = teacherId
-        };
-        context.Students.Add(studentRecord);
+        });
 
-        // Guardian record
         context.Guardians.Add(new Guardian { UserId = guardianId, ChildrenIds = "[]" });
 
-        // Teacher record
         context.Teachers.Add(new Teacher { UserId = teacherId, Specialization = "حفظ وتجويد", StudentIds = "[]" });
 
-        // Hero Settings
         context.HeroSettings.Add(new HeroSettings
         {
             Id = Guid.NewGuid(),
@@ -233,30 +246,35 @@ using (var scope = app.Services.CreateScope())
             SubtitleEn = "Expert teachers • Flexible schedules • From anywhere in the world",
             TaglineAr = "ابدأ رحلتك مع القرآن اليوم",
             TaglineEn = "Start your Quran journey today",
-            InstapayNumber = "+20 100 000 0000",
-            InstapayName = "أكاديمية سراج",
-            ContactPhone = "+966 50 000 0000",
+            InstapayNumber = "belalahmedabdelazim@instapay",
+            InstapayName = "بلال احمد عبدالعظيم عزوز",
+            InstapayLink = "https://ipn.eg/S/belalahmedabdelazim/instapay/3566fS",
+            VodafoneCashNumber = "01222337262",
+            BankName = "البنك الأهلي المصري",
+            BankAccountName = "بلال احمد عبدالعظيم عزوز",
+            BankAccountNumber = "8623011865188800018",
+            BankIban = "EG090003086230118651888000180",
+            BankSwiftCode = "",
+            ContactPhone = "01222337262",
             ContactEmail = "info@sirajacademy.com",
+            WhatsAppNumber = "01222337262",
             ReferralDiscount = 50,
             UpdatedAt = now
         });
 
-        // Discount Codes
         context.DiscountCodes.AddRange(
             new DiscountCode { Id = Guid.NewGuid(), Code = "SIRAJ-AMA123", DiscountAmount = 50, CreatedBy = adminId, CreatedAt = now },
             new DiscountCode { Id = Guid.NewGuid(), Code = "SIRAJ-MAS123", DiscountAmount = 50, CreatedBy = adminId, CreatedAt = now },
             new DiscountCode { Id = Guid.NewGuid(), Code = "DISCOUNT50", DiscountAmount = 50, CreatedBy = adminId, CreatedAt = now }
         );
 
-        // Family Discounts
         context.FamilyDiscounts.AddRange(
-            new FamilyDiscount { Id = Guid.NewGuid(), Order = 1, DiscountPercentage = 0, LabelAr = "الطفل الأول", LabelEn = "1st Child", Icon = "👧", CreatedAt = now, UpdatedAt = now },
-            new FamilyDiscount { Id = Guid.NewGuid(), Order = 2, DiscountPercentage = 10, LabelAr = "الطفل الثاني", LabelEn = "2nd Child", Icon = "👦", CreatedAt = now, UpdatedAt = now },
-            new FamilyDiscount { Id = Guid.NewGuid(), Order = 3, DiscountPercentage = 15, LabelAr = "الطفل الثالث", LabelEn = "3rd Child", Icon = "👧", CreatedAt = now, UpdatedAt = now },
-            new FamilyDiscount { Id = Guid.NewGuid(), Order = 4, DiscountPercentage = 20, LabelAr = "٤ أطفال فأكثر", LabelEn = "4+ Children", Icon = "👨‍👩‍👧‍👦", CreatedAt = now, UpdatedAt = now }
+            new FamilyDiscount { Id = Guid.NewGuid(), Order = 1, DiscountPercentage = 0, LabelAr = "الطفل الأول", LabelEn = "1st Child", Icon = "child1", CreatedAt = now, UpdatedAt = now },
+            new FamilyDiscount { Id = Guid.NewGuid(), Order = 2, DiscountPercentage = 10, LabelAr = "الطفل الثاني", LabelEn = "2nd Child", Icon = "child2", CreatedAt = now, UpdatedAt = now },
+            new FamilyDiscount { Id = Guid.NewGuid(), Order = 3, DiscountPercentage = 15, LabelAr = "الطفل الثالث", LabelEn = "3rd Child", Icon = "child3", CreatedAt = now, UpdatedAt = now },
+            new FamilyDiscount { Id = Guid.NewGuid(), Order = 4, DiscountPercentage = 20, LabelAr = "4 أطفال فأكثر", LabelEn = "4+ Children", Icon = "children", CreatedAt = now, UpdatedAt = now }
         );
 
-        // Packages
         context.Packages.AddRange(
             new Package
             {
@@ -264,6 +282,10 @@ using (var scope = app.Services.CreateScope())
                 NameAr = "الباقة الأساسية",
                 NameEn = "Basic",
                 Price = 360,
+                OriginalPrice = null,
+                PriceUsd = 96,
+                OriginalPriceUsd = null,
+                DefaultCurrency = "SAR",
                 Sessions = 8,
                 SessionsPerWeek = 2,
                 Color = "#1E6B4A",
@@ -281,6 +303,9 @@ using (var scope = app.Services.CreateScope())
                 NameEn = "Premium",
                 Price = 450,
                 OriginalPrice = 540,
+                PriceUsd = 120,
+                OriginalPriceUsd = 144,
+                DefaultCurrency = "SAR",
                 Sessions = 12,
                 SessionsPerWeek = 3,
                 Color = "#C9A84C",
@@ -300,6 +325,9 @@ using (var scope = app.Services.CreateScope())
                 NameEn = "VIP",
                 Price = 750,
                 OriginalPrice = 900,
+                PriceUsd = 200,
+                OriginalPriceUsd = 240,
+                DefaultCurrency = "SAR",
                 Sessions = 20,
                 SessionsPerWeek = 5,
                 Color = "#7C3AED",
@@ -315,7 +343,10 @@ using (var scope = app.Services.CreateScope())
         );
 
         await context.SaveChangesAsync();
-        Console.WriteLine("✅ Database seeded!");
+        Console.WriteLine("Database seeded successfully!");
+        Console.WriteLine("InstaPay: belalahmedabdelazim@instapay");
+        Console.WriteLine("Vodafone Cash: 01222337262");
+        Console.WriteLine("Bank IBAN: EG090003086230118651888000180");
     }
 }
 

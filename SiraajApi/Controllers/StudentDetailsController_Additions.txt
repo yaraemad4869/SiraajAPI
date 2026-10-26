@@ -1,0 +1,75 @@
+﻿// ============================================
+// ADD THESE METHODS TO StudentDetailsController.cs
+// ============================================
+
+// PUT: api/students/{id}
+[HttpPut("{id}")]
+[Authorize(Roles = "admin,supervisor")]
+public async Task<IActionResult> UpdateStudent(Guid id, [FromBody] UpdateStudentRequest request)
+{
+    try
+    {
+        var student = await _context.Students
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.UserId == id);
+
+        if (student == null)
+        {
+            return NotFound(new
+            {
+                success = false,
+                statusCode = 404,
+                message = "Student not found",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/students/{id}"
+            });
+        }
+
+        // Update user info
+        if (student.User != null)
+        {
+            student.User.NameAr = request.NameAr ?? student.User.NameAr;
+            student.User.NameEn = request.NameEn ?? student.User.NameEn;
+            student.User.Phone = request.Phone ?? student.User.Phone;
+            student.User.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Update student info
+        student.PackageId = request.PackageId ?? student.PackageId;
+        student.Status = request.Status ?? student.Status;
+        student.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            data = student,
+            message = "Student updated successfully"
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while updating student",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/students/{id}"
+        });
+    }
+}
+
+// ============================================
+// ADD THIS DTO AT THE BOTTOM OF THE FILE
+// ============================================
+
+public class UpdateStudentRequest
+{
+    public string? NameAr { get; set; }
+    public string? NameEn { get; set; }
+    public string? Phone { get; set; }
+    public string? PackageId { get; set; }
+    public string? Status { get; set; } // active, pending, inactive
+}

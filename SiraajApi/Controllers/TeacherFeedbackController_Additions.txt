@@ -1,0 +1,118 @@
+﻿// ============================================
+// ADD THESE METHODS TO TeacherFeedbackController.cs
+// ============================================
+
+// GET: api/teachers/feedback
+[HttpGet("feedback")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> GetTeacherFeedback()
+{
+    try
+    {
+        var userId = Guid.Parse(User.FindFirst("userId")?.Value ?? Guid.Empty.ToString());
+        var teacher = await _context.Teachers
+            .FirstOrDefaultAsync(t => t.UserId == userId);
+
+        if (teacher == null)
+        {
+            return Unauthorized(new
+            {
+                success = false,
+                statusCode = 401,
+                message = "Only teachers can access this endpoint",
+                timestamp = DateTime.UtcNow,
+                path = "/api/teachers/feedback"
+            });
+        }
+
+        var feedback = await _context.SessionFeedbacks
+            .Include(sf => sf.Student)
+            .ThenInclude(s => s.User)
+            .Where(sf => sf.TeacherId == teacher.UserId)
+            .OrderByDescending(sf => sf.SessionDate)
+            .Select(sf => new
+            {
+                sf.Id,
+                sf.StudentId,
+                StudentName = sf.Student.User.NameAr,
+                sf.SessionDate,
+                sf.SessionDuration,
+                sf.OverallRating,
+                sf.TeacherNotes,
+                sf.Homework,
+                sf.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new { success = true, data = feedback });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while fetching teacher feedback",
+            timestamp = DateTime.UtcNow,
+            path = "/api/teachers/feedback"
+        });
+    }
+}
+
+// GET: api/teachers/feedback/student/{id}/range
+[HttpGet("feedback/student/{id}/range")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> GetStudentFeedbackByRange(Guid id, [FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+{
+    try
+    {
+        var query = _context.SessionFeedbacks
+            .Include(sf => sf.Student)
+            .ThenInclude(s => s.User)
+            .Include(sf => sf.Teacher)
+            .ThenInclude(t => t.User)
+            .Where(sf => sf.StudentId == id);
+
+        if (startDate.HasValue)
+        {
+            query = query.Where(sf => sf.SessionDate >= startDate.Value);
+        }
+
+        if (endDate.HasValue)
+        {
+            query = query.Where(sf => sf.SessionDate <= endDate.Value);
+        }
+
+        var feedback = await query
+            .OrderByDescending(sf => sf.SessionDate)
+            .Select(sf => new
+            {
+                sf.Id,
+                sf.StudentId,
+                StudentName = sf.Student.User.NameAr,
+                sf.TeacherId,
+                TeacherName = sf.Teacher.User.NameAr,
+                sf.SessionDate,
+                sf.SessionDuration,
+                sf.OverallRating,
+                sf.TeacherNotes,
+                sf.Homework,
+                sf.NextSessionFocus,
+                sf.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new { success = true, data = feedback, count = feedback.Count });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while fetching feedback by range",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/teachers/feedback/student/{id}/range"
+        });
+    }
+}

@@ -1,0 +1,201 @@
+﻿// ============================================
+// ADD THESE METHODS FOR SURAH REPORT MANAGEMENT
+// ============================================
+
+// PUT: api/teachers/reports/{id}
+[HttpPut("reports/{id}")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> UpdateSurahReport(Guid id, [FromBody] SurahCompletionRequest request)
+{
+    try
+    {
+        var report = await _context.SurahCompletionReports
+            .FirstOrDefaultAsync(sc => sc.Id == id);
+
+        if (report == null)
+        {
+            return NotFound(new
+            {
+                success = false,
+                statusCode = 404,
+                message = "Report not found",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/teachers/reports/{id}"
+            });
+        }
+
+        // Check if teacher owns this report
+        var userId = Guid.Parse(User.FindFirst("userId")?.Value ?? Guid.Empty.ToString());
+        if (report.TeacherId != userId && !User.IsInRole("admin") && !User.IsInRole("supervisor"))
+        {
+            return Unauthorized(new
+            {
+                success = false,
+                statusCode = 401,
+                message = "You are not authorized to update this report",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/teachers/reports/{id}"
+            });
+        }
+
+        // Update fields
+        report.SurahName = request.SurahName ?? report.SurahName;
+        report.SurahNumber = request.SurahNumber;
+        report.CompletionType = request.CompletionType ?? report.CompletionType;
+        report.VersesCount = request.VersesCount;
+        report.VersesStart = request.VersesStart;
+        report.VersesEnd = request.VersesEnd;
+        report.MemorizationAccuracy = request.MemorizationAccuracy;
+        report.TajweedAccuracy = request.TajweedAccuracy;
+        report.Fluency = request.Fluency;
+        report.Strengths = System.Text.Json.JsonSerializer.Serialize(request.Strengths ?? new List<string>());
+        report.Weaknesses = System.Text.Json.JsonSerializer.Serialize(request.Weaknesses ?? new List<string>());
+        report.Recommendations = System.Text.Json.JsonSerializer.Serialize(request.Recommendations ?? new List<string>());
+        report.TeacherNotes = request.TeacherNotes ?? report.TeacherNotes;
+        report.CompletedAt = request.CompletedAt;
+        report.NextSurahRecommended = request.NextSurahRecommended ?? report.NextSurahRecommended;
+        report.ReviewFrequency = request.ReviewFrequency ?? report.ReviewFrequency;
+        report.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            data = report,
+            message = "Report updated successfully"
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while updating report",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/teachers/reports/{id}"
+        });
+    }
+}
+
+// DELETE: api/teachers/reports/{id}
+[HttpDelete("reports/{id}")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> DeleteSurahReport(Guid id)
+{
+    try
+    {
+        var report = await _context.SurahCompletionReports
+            .FirstOrDefaultAsync(sc => sc.Id == id);
+
+        if (report == null)
+        {
+            return NotFound(new
+            {
+                success = false,
+                statusCode = 404,
+                message = "Report not found",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/teachers/reports/{id}"
+            });
+        }
+
+        // Check if teacher owns this report
+        var userId = Guid.Parse(User.FindFirst("userId")?.Value ?? Guid.Empty.ToString());
+        if (report.TeacherId != userId && !User.IsInRole("admin") && !User.IsInRole("supervisor"))
+        {
+            return Unauthorized(new
+            {
+                success = false,
+                statusCode = 401,
+                message = "You are not authorized to delete this report",
+                timestamp = DateTime.UtcNow,
+                path = $"/api/teachers/reports/{id}"
+            });
+        }
+
+        _context.SurahCompletionReports.Remove(report);
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "Report deleted successfully"
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while deleting report",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/teachers/reports/{id}"
+        });
+    }
+}
+
+// GET: api/teachers/reports/student/{id}/range
+[HttpGet("reports/student/{id}/range")]
+[Authorize(Roles = "admin,supervisor,teacher")]
+public async Task<IActionResult> GetStudentReportsByRange(Guid id, [FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+{
+    try
+    {
+        var query = _context.SurahCompletionReports
+            .Include(sc => sc.Student)
+            .ThenInclude(s => s.User)
+            .Include(sc => sc.Teacher)
+            .ThenInclude(t => t.User)
+            .Where(sc => sc.StudentId == id);
+
+        if (startDate.HasValue)
+        {
+            query = query.Where(sc => sc.CompletedAt >= startDate.Value);
+        }
+
+        if (endDate.HasValue)
+        {
+            query = query.Where(sc => sc.CompletedAt <= endDate.Value);
+        }
+
+        var reports = await query
+            .OrderByDescending(sc => sc.CompletedAt)
+            .Select(sc => new
+            {
+                sc.Id,
+                sc.StudentId,
+                StudentName = sc.Student.User.NameAr,
+                sc.TeacherId,
+                TeacherName = sc.Teacher.User.NameAr,
+                sc.SurahName,
+                sc.SurahNumber,
+                sc.CompletionType,
+                sc.VersesCount,
+                sc.VersesStart,
+                sc.VersesEnd,
+                sc.MemorizationAccuracy,
+                sc.TajweedAccuracy,
+                sc.Fluency,
+                sc.TeacherNotes,
+                sc.CompletedAt,
+                sc.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new { success = true, data = reports, count = reports.Count });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new
+        {
+            success = false,
+            statusCode = 500,
+            message = "An error occurred while fetching reports by range",
+            timestamp = DateTime.UtcNow,
+            path = $"/api/teachers/reports/student/{id}/range"
+        });
+    }
+}

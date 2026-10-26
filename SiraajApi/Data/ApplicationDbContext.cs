@@ -27,6 +27,14 @@ namespace SiraajApi.Data
         public DbSet<Payment> Payments { get; set; }
         public DbSet<Invoice> Invoices { get; set; }
         public DbSet<Subscription> Subscriptions { get; set; }
+        
+        // NEW TABLES
+        public DbSet<Supervisor> Supervisors { get; set; }
+        public DbSet<StudentDetails> StudentDetails { get; set; }
+        public DbSet<SessionFeedback> SessionFeedbacks { get; set; }
+        public DbSet<SurahCompletionReport> SurahCompletionReports { get; set; }
+        public DbSet<QuranSurah> QuranSurahs { get; set; }
+        public DbSet<TajweedRule> TajweedRules { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -84,6 +92,80 @@ namespace SiraajApi.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            // Supervisor configuration
+            modelBuilder.Entity<Supervisor>(entity =>
+            {
+                entity.HasKey(s => s.Id);
+
+                entity.HasOne(s => s.User)
+                    .WithMany()
+                    .HasForeignKey(s => s.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasIndex(s => s.Email)
+                    .IsUnique();
+            });
+
+            // StudentDetails configuration
+            modelBuilder.Entity<StudentDetails>(entity =>
+            {
+                entity.HasKey(sd => sd.Id);
+
+                entity.HasOne(sd => sd.Student)
+                    .WithMany()
+                    .HasForeignKey(sd => sd.StudentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasOne(sd => sd.Supervisor)
+                    .WithMany(s => s.Students)
+                    .HasForeignKey(sd => sd.SupervisorId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(sd => sd.Teacher)
+                    .WithMany()
+                    .HasForeignKey(sd => sd.TeacherId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // SessionFeedback configuration
+            modelBuilder.Entity<SessionFeedback>(entity =>
+            {
+                entity.HasKey(sf => sf.Id);
+
+                entity.HasOne(sf => sf.Student)
+                    .WithMany()
+                    .HasForeignKey(sf => sf.StudentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasOne(sf => sf.Teacher)
+                    .WithMany()
+                    .HasForeignKey(sf => sf.TeacherId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // SurahCompletionReport configuration
+            modelBuilder.Entity<SurahCompletionReport>(entity =>
+            {
+                entity.HasKey(sc => sc.Id);
+
+                entity.HasOne(sc => sc.Student)
+                    .WithMany()
+                    .HasForeignKey(sc => sc.StudentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasOne(sc => sc.Teacher)
+                    .WithMany()
+                    .HasForeignKey(sc => sc.TeacherId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // QuranSurah configuration
+            modelBuilder.Entity<QuranSurah>(entity =>
+            {
+                entity.HasIndex(qs => qs.Number)
+                    .IsUnique();
+            });
+
             // RefreshToken configuration
             modelBuilder.Entity<RefreshToken>(entity =>
             {
@@ -133,20 +215,6 @@ namespace SiraajApi.Data
                 entity.HasOne(sp => sp.Package)
                     .WithMany()
                     .HasForeignKey(sp => sp.PackageId)
-                    .OnDelete(DeleteBehavior.Restrict);
-            });
-
-            // ReferralDiscount configuration
-            modelBuilder.Entity<ReferralDiscount>(entity =>
-            {
-                entity.HasOne(rd => rd.Referrer)
-                    .WithMany()
-                    .HasForeignKey(rd => rd.ReferrerId)
-                    .OnDelete(DeleteBehavior.Restrict);
-
-                entity.HasOne(rd => rd.ReferredUser)
-                    .WithMany()
-                    .HasForeignKey(rd => rd.ReferredUserId)
                     .OnDelete(DeleteBehavior.Restrict);
             });
 
