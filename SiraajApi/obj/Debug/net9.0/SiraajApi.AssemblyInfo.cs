@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SiraajApi")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+544f06ce239cadcf28c03fa8742c6960d5a91979")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+35c7372a4e579bcd4caa1d836ce22238099c4a42")]
 [assembly: System.Reflection.AssemblyProductAttribute("SiraajApi")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SiraajApi")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
